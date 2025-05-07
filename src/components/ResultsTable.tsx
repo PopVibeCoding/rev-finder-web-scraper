@@ -51,7 +51,7 @@ const ResultsTable = ({ results }: ResultsTableProps) => {
                   ) : (
                     <div className="flex items-center gap-2 text-green-600">
                       <DollarSign className="h-4 w-4" />
-                      <span>{row.revenue}</span>
+                      <span className="font-medium">{row.revenue}</span>
                     </div>
                   )}
                 </TableCell>

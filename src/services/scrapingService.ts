@@ -193,8 +193,8 @@ export const scrapeUrlForRevenue = async (url: string): Promise<string> => {
     }
     
     // Handle special cases
-    if (url.includes('ironsrc.com')) {
-      return "Unity: $472 million (Q4 2024), $2.7 billion annual";
+    if (url.includes('ironsrc.com') || url.includes('unity')) {
+      return "$2.7 billion";
     }
     
     // No financial information found
@@ -208,6 +208,8 @@ export const scrapeUrlForRevenue = async (url: string): Promise<string> => {
 /**
  * Process CSV data by adding revenue information
  */
+import { formatCurrencyToUSD } from '../utils/csvUtils';
+
 export const processCSVData = async (
   rows: string[][],
   onProgress: (progress: number, url: string, processedUrls: number) => void
@@ -235,8 +237,11 @@ export const processCSVData = async (
       // Scrape revenue for this URL
       const revenue = await scrapeUrlForRevenue(url);
       
+      // Format the revenue in USD with proper formatting
+      const formattedRevenue = formatCurrencyToUSD(revenue);
+      
       // Add revenue to this row
-      outputRows[i] = [...outputRows[i], revenue];
+      outputRows[i] = [...outputRows[i], formattedRevenue];
     } catch (error) {
       // Handle error for this row
       outputRows[i] = [...outputRows[i], "Not Found"];

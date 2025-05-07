@@ -91,3 +91,73 @@ export const downloadCSV = (rows: string[][], filename: string): void => {
   link.click();
   document.body.removeChild(link);
 };
+
+/**
+ * Format currency value according to specified format (#,##0_);(#,##0)
+ * Always return in USD ($) with proper formatting
+ */
+export const formatCurrencyToUSD = (value: string): string => {
+  // Handle 'Not Found' case
+  if (value === "Not Found") {
+    return value;
+  }
+
+  try {
+    // Extract the numerical value and currency
+    const numericMatch = value.match(/([\d,.]+)\s*(million|billion|trillion|m|b|t)?/i);
+    
+    if (!numericMatch) {
+      return value; // Return original if pattern doesn't match
+    }
+    
+    // Extract the numeric part and the scale
+    let numericValue = parseFloat(numericMatch[1].replace(/,/g, ''));
+    const scale = numericMatch[2]?.toLowerCase();
+    
+    // Apply scaling factor based on the unit
+    if (scale) {
+      if (scale === 'million' || scale === 'm') {
+        numericValue *= 1000000;
+      } else if (scale === 'billion' || scale === 'b') {
+        numericValue *= 1000000000;
+      } else if (scale === 'trillion' || scale === 't') {
+        numericValue *= 1000000000000;
+      }
+    }
+    
+    // Handle currency conversion (simplified - in a real app we'd use exchange rates)
+    // Here we assume a fixed conversion rate for demonstration
+    if (value.includes('€')) {
+      // Convert EUR to USD (example rate: 1 EUR = 1.1 USD)
+      numericValue *= 1.1;
+    } else if (value.includes('£')) {
+      // Convert GBP to USD (example rate: 1 GBP = 1.3 USD)
+      numericValue *= 1.3;
+    } else if (value.includes('¥')) {
+      // Convert JPY to USD (example rate: 1 USD = 150 JPY)
+      numericValue /= 150;
+    }
+    
+    // Format according to the specified pattern
+    const formatter = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      maximumFractionDigits: 0,
+      minimumFractionDigits: 0,
+    });
+    
+    // Format the number and scale back to appropriate units for display
+    if (numericValue >= 1000000000000) {
+      return formatter.format(numericValue / 1000000000000) + ' trillion';
+    } else if (numericValue >= 1000000000) {
+      return formatter.format(numericValue / 1000000000) + ' billion';
+    } else if (numericValue >= 1000000) {
+      return formatter.format(numericValue / 1000000) + ' million';
+    } else {
+      return formatter.format(numericValue);
+    }
+  } catch (error) {
+    console.error("Error formatting currency:", error);
+    return value; // Return the original value in case of error
+  }
+};
