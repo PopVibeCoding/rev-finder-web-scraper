@@ -1,4 +1,3 @@
-
 /**
  * Parse a CSV file into an array of rows
  */
@@ -94,7 +93,7 @@ export const downloadCSV = (rows: string[][], filename: string): void => {
 
 /**
  * Format currency value according to specified format (#,##0_);(#,##0)
- * Always return in USD ($) with proper formatting
+ * Always return in USD ($) with proper formatting and full numbers
  */
 export const formatCurrencyToUSD = (value: string): string => {
   // Handle 'Not Found' case
@@ -138,7 +137,7 @@ export const formatCurrencyToUSD = (value: string): string => {
       numericValue /= 150;
     }
     
-    // Format according to the specified pattern
+    // Format according to the specified pattern (#,##0_);(#,##0)
     const formatter = new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency: 'USD',
@@ -146,16 +145,8 @@ export const formatCurrencyToUSD = (value: string): string => {
       minimumFractionDigits: 0,
     });
     
-    // Format the number and scale back to appropriate units for display
-    if (numericValue >= 1000000000000) {
-      return formatter.format(numericValue / 1000000000000) + ' trillion';
-    } else if (numericValue >= 1000000000) {
-      return formatter.format(numericValue / 1000000000) + ' billion';
-    } else if (numericValue >= 1000000) {
-      return formatter.format(numericValue / 1000000) + ' million';
-    } else {
-      return formatter.format(numericValue);
-    }
+    // Return the full number with proper formatting
+    return formatter.format(numericValue);
   } catch (error) {
     console.error("Error formatting currency:", error);
     return value; // Return the original value in case of error
