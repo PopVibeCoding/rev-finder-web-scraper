@@ -1,4 +1,3 @@
-
 """
 Revenue Scraper API
 
@@ -18,9 +17,19 @@ import re
 import time
 from urllib.parse import urlparse, urljoin
 import concurrent.futures
+import os
 
 app = Flask(__name__)
-CORS(app)  # Enable Cross-Origin Resource Sharing
+
+# Enable CORS with specific origins for production readiness
+CORS(app, resources={r"/api/*": {"origins": [
+    "http://localhost:3000", 
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://192.168.6.186:5173",
+    # Add your production domain here when deployed
+]}})
 
 # Constants similar to the JavaScript version
 FINANCIAL_KEYWORDS = [
@@ -301,5 +310,12 @@ def batch_scrape_endpoint():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for AWS"""
+    return jsonify({"status": "healthy"}), 200
+
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Get port from environment variable for AWS compatibility
+    port = int(os.environ.get('PORT', 5000))
+    app.run(debug=False, host='0.0.0.0', port=port)

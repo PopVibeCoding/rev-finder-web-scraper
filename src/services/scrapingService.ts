@@ -3,7 +3,10 @@
 
 import { formatCurrencyToUSD } from '../utils/csvUtils';
 
-const API_BASE_URL = 'http://localhost:5000'; // Base URL for Python backend
+// Update to support both local and network address
+const API_BASE_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+  ? 'http://127.0.0.1:5000' 
+  : 'http://192.168.6.186:5000';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
