@@ -157,9 +157,70 @@ const extractRevenueFigure = (text: string): string => {
 };
 
 /**
+ * Makes a request to the Python backend with retry logic
+ */
+const makeRequestWithRetry = async <T>(
+  url: string, 
+  options: RequestInit = {}, 
+  maxRetries = 3
+): Promise<T> => {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      // Add exponential backoff between retries
+      if (attempt > 0) {
+        const delay = Math.pow(2, attempt) * 1000; // 2, 4, 8... seconds
+        await sleep(delay);
+      }
+      
+      const response = await fetch(url, options);
+      
+      if (!response.ok) {
+        throw new Error(`Server responded with status: ${response.status}`);
+      }
+      
+      return await response.json() as T;
+    } catch (error) {
+      console.error(`Attempt ${attempt + 1}/${maxRetries} failed:`, error);
+      lastError = error instanceof Error ? error : new Error(String(error));
+      
+      // Only continue if we haven't reached max retries
+      if (attempt === maxRetries - 1) {
+        throw new Error(`Failed after ${maxRetries} attempts: ${lastError.message}`);
+      }
+    }
+  }
+  
+  // This should never happen due to the throw inside the loop
+  throw new Error('Request failed with retry');
+};
+
+/**
  * Simulates a scraping operation for a single URL
+ * In production, this would call your Python backend API
  */
 export const scrapeUrlForRevenue = async (url: string): Promise<string> => {
+  // In production, you would replace this with an actual API call to your Python backend
+  // Example of how you would call a Python API:
+  /*
+  try {
+    const response = await makeRequestWithRetry<{ revenue: string }>(
+      'https://your-python-api.com/scrape', 
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url })
+      }
+    );
+    
+    return response.revenue || "Not Found";
+  } catch (error) {
+    console.error(`Error calling Python scraper API for ${url}:`, error);
+    return "Not Found";
+  }
+  */
+  
   if (!url.startsWith('http')) {
     url = 'https://' + url;
   }

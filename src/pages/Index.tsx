@@ -7,7 +7,7 @@ import ProcessingStatus from "@/components/ProcessingStatus";
 import ResultsTable from "@/components/ResultsTable";
 import { parseCSV, downloadCSV } from "@/utils/csvUtils";
 import { processCSVData } from "@/services/scrapingService";
-import { Database, FileSearch, Download, Link } from "lucide-react";
+import { Database, FileSearch, Download } from "lucide-react";
 
 type AppStatus = "idle" | "processing" | "completed" | "error";
 
@@ -217,30 +217,7 @@ const Index = () => {
             )}
             
             {status === "completed" && results.length > 0 && (
-              <>
-                <ResultsTable results={results} />
-                <div className="rounded-lg border bg-card p-6">
-                  <div className="flex items-start gap-4">
-                    <div className="bg-green-100 p-3 rounded-full">
-                      <Link className="h-6 w-6 text-green-600" />
-                    </div>
-                    <div>
-                      <h3 className="font-medium text-lg">Need to Process More URLs?</h3>
-                      <p className="text-muted-foreground mb-4">
-                        The demo version processes each URL with simulated data. In a production environment, 
-                        this would connect to a Python backend that performs the actual web scraping.
-                      </p>
-                      <Button
-                        onClick={handleDownload}
-                        className="flex gap-2"
-                      >
-                        <Download className="h-4 w-4" />
-                        Download Your Enriched CSV
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </>
+              <ResultsTable results={results} />
             )}
             
             {status === "idle" && (
