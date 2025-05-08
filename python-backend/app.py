@@ -24,11 +24,12 @@ CORS(app)  # Enable Cross-Origin Resource Sharing
 
 # Constants similar to the JavaScript version
 FINANCIAL_KEYWORDS = [
-    'revenue', 'annual revenue', 'quarterly revenue', 
+    'revenue', 'annual revenue', 'annual revenue 2024', 
+    'annual revenue 2025', 'turnover 2024', 'turnover 2025',
     'sales', 'turnover', 'income', 'earnings',
     'financial results', 'financial highlights',
     'million', 'billion', 'trillion',
-    'fiscal year', 'fy', 'q1', 'q2', 'q3', 'q4'
+    'fiscal year', 'fy'
 ]
 
 FINANCIAL_PATHS = [
