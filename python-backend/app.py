@@ -1,3 +1,4 @@
+
 """
 Revenue Scraper API
 
@@ -20,6 +21,10 @@ import concurrent.futures
 import os
 from googletrans import Translator
 import json
+from dotenv import load_dotenv
+
+# Load environment variables from .env file if present
+load_dotenv()
 
 app = Flask(__name__)
 
@@ -42,6 +47,15 @@ FINANCIAL_KEYWORDS = [
     'million', 'billion', 'trillion', 'yearly revenue', 'quarterly revenue',
     'fiscal year', 'fy', 'fy2024', 'fy2023', 'fy 2024', 'fy 2023',
     'annual report', '10-k', '10k', 'form 10-k', 'sec filing'
+]
+
+# Common paths that might contain revenue information
+FINANCIAL_PAGES = [
+    'about', 'about-us', 'about-company', 'company', 'corporate',
+    'investor', 'investors', 'investor-relations', 'financials',
+    'financial-information', 'annual-report', 'annual-reports',
+    'reports', 'results', 'earnings', 'press', 'press-releases',
+    'news', 'media', 'company-information'
 ]
 
 # Year priority order: 2025, 2024, 2023
@@ -76,6 +90,24 @@ COUNTRY_LANGUAGE_MAP = {
     'Turkey': 'tr',
     # Add more country-language mappings as needed
 }
+
+# Trusted financial news sources for search queries
+TRUSTED_SOURCES = [
+    'investing.com',
+    'reuters.com',
+    'bloomberg.com',
+    'cnbc.com',
+    'wsj.com',
+    'ft.com',
+    'finance.yahoo.com',
+    'seekingalpha.com',
+    'marketwatch.com',
+    'fool.com',
+    'forbes.com',
+    'businessinsider.com',
+    'nasdaq.com',
+    'sec.gov'
+]
 
 # Request headers to simulate a real browser for better crawling
 HEADERS = {
@@ -312,6 +344,12 @@ def extract_revenue_with_context(text, prefer_recent=True):
         r'total revenue (?:of|was|is|:)? \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
         r'([\d,.]+)\s*(million|billion|trillion)\s*in (?:total)?\s*revenue',
         r'annual revenue (?:of|was|is|:)? \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        
+        # New broader patterns (per requirements)
+        r'revenue[^$\d]{0,10}[\$€£¥]?\s?([\d,.]+)\s*(million|billion|trillion|m|b|t)?',
+        r'[\$€£¥]\s?([\d,.]+)\s*(million|billion|trillion|m|b|t)?\s*(?:in|of)?\s*revenue',
+        r'annual (?:revenue|sales|turnover)[^$\d]{0,20}[\$€£¥]?\s?([\d,.]+)',
+        r'(?:revenue|sales) (?:for|in) (?:20[23][0-9]|FY\s?(?:20)?[23][0-9])[^$\d]{0,15}[\$€£¥]?\s?([\d,.]+)',
     ]
     
     # First try to find year-specific matches (2025/2024/2023)
@@ -527,12 +565,113 @@ def scrape_page_for_revenue(url):
         print(f"Error scraping {url}: {e}")
         return ""
 
-def search_google_for_revenue(company_name, country=None):
+def search_duckduckgo_for_revenue(company_name, country=None, domain=None):
+    """Search DuckDuckGo for company revenue information"""
+    try:
+        print(f"Searching DuckDuckGo for {company_name} revenue...")
+        search_results = []
+        
+        # Create a search query that combines the company name, revenue, country and year
+        search_queries = []
+        
+        # Build site-specific search if we have a domain
+        site_query = ""
+        if domain:
+            site_query = f"site:{domain} OR "
+        
+        # Build search query including trusted financial sources
+        trusted_sites_query = " OR ".join([f"site:{site}" for site in TRUSTED_SOURCES[:5]])  # Limit to 5 sites
+        
+        # Generate queries for each priority year
+        for year in PRIORITY_YEARS:
+            query = f"{site_query}{company_name} revenue {year} {country or ''} ({trusted_sites_query})"
+            search_queries.append(query)
+        
+        # Search DuckDuckGo
+        for query in search_queries[:2]:  # Limit to 2 queries to avoid rate limiting
+            escaped_query = quote_plus(query)
+            search_url = f"https://html.duckduckgo.com/html/?q={escaped_query}"
+            
+            try:
+                response = requests.get(
+                    search_url,
+                    headers=HEADERS,
+                    timeout=15
+                )
+                response.raise_for_status()
+                
+                # Parse HTML response
+                soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Extract result snippets
+                results = soup.find_all('div', {'class': 'result__snippet'})
+                if not results:
+                    # Alternative class names
+                    results = soup.find_all('div', {'class': ['snippet', 'result-snippet']})
+                
+                for result in results[:5]:  # Get top 5 results
+                    result_text = result.get_text(strip=True)
+                    search_results.append(result_text)
+                    
+                # Also get the result links to potentially scrape them
+                result_links = soup.find_all('a', {'class': 'result__a'}) 
+                if not result_links:
+                    result_links = soup.find_all('a', {'class': ['result-link', 'result__url']})
+                
+                result_urls = []
+                for link in result_links[:3]:  # Top 3 links
+                    href = link.get('href')
+                    if href and not href.startswith('/'):
+                        result_urls.append(href)
+                
+                # Try to scrape content from the result URLs
+                for url in result_urls:
+                    try:
+                        content = fetch_with_retry(url, max_retries=1, timeout=10)
+                        if content:
+                            page_soup = BeautifulSoup(content, 'html.parser')
+                            # Extract paragraphs that might contain revenue info
+                            for p in page_soup.find_all(['p', 'div']):
+                                p_text = p.get_text(strip=True)
+                                if any(keyword in p_text.lower() for keyword in FINANCIAL_KEYWORDS):
+                                    search_results.append(p_text)
+                    except Exception as e:
+                        print(f"Error scraping search result URL {url}: {e}")
+                        continue
+                        
+            except Exception as e:
+                print(f"Error searching DuckDuckGo: {e}")
+                continue
+        
+        # Combine all search result texts
+        all_text = " ".join(search_results)
+        
+        # Try to extract revenue information
+        if all_text:
+            revenue_figure = extract_revenue_with_context(all_text)
+            if revenue_figure != "Not Found":
+                return revenue_figure
+                
+        return "Not Found"
+        
+    except Exception as e:
+        print(f"Error in DuckDuckGo search: {e}")
+        return "Not Found"
+
+def search_google_for_revenue(company_name, country=None, domain=None):
     """Search Google for company revenue information using default and local language"""
     try:
         print(f"Searching Google for {company_name} revenue...")
         search_results = []
         
+        # Check if SerpAPI key is available
+        serp_api_key = os.environ.get('SERPAPI_KEY')
+        if serp_api_key:
+            try:
+                return search_serpapi_for_revenue(company_name, country, domain, serp_api_key)
+            except Exception as e:
+                print(f"SerpAPI error: {e}. Falling back to direct Google scraping.")
+                
         # Determine the language to use based on the country
         local_language = get_language_for_country(country) if country else None
         
@@ -541,9 +680,17 @@ def search_google_for_revenue(company_name, country=None):
         
         # English queries with priority years
         for year in PRIORITY_YEARS:
-            search_queries.append(f"{company_name} annual revenue {year}")
-            search_queries.append(f"{company_name} yearly revenue {year}")
-            search_queries.append(f"{company_name} financial results {year}")
+            # Base query format
+            base_query = f"{company_name} annual revenue {year}"
+            
+            # Add domain-specific search if available
+            if domain:
+                search_queries.append(f"site:{domain} {base_query}")
+                
+            # Add trusted financial sites
+            trusted_sites = " OR ".join([f"site:{site}" for site in TRUSTED_SOURCES[:3]])
+            search_queries.append(f"{base_query} {country or ''} ({trusted_sites})")
+            search_queries.append(f"{company_name} financial results {year} {country or ''}")
         
         # Add local language queries if available
         if local_language and local_language != 'en':
@@ -572,11 +719,39 @@ def search_google_for_revenue(company_name, country=None):
                 soup = BeautifulSoup(html_content, 'html.parser')
                 
                 # Extract search result descriptions
-                search_results_elements = soup.select(".BNeawe")
+                search_results_elements = soup.select(".BNeawe, .st, .aCOpRe")
                 
                 for result in search_results_elements:
                     result_text = result.get_text(strip=True)
                     search_results.append(result_text)
+                    
+                # Try to extract links to financial pages
+                result_links = soup.select("a[href^='/url?']")
+                result_urls = []
+                
+                for link in result_links[:3]:  # Process top 3 links
+                    href = link.get('href', '')
+                    if 'url?' in href:
+                        # Extract the actual URL from Google's redirect
+                        url_param = href.split('url=')[1].split('&')[0] if 'url=' in href else ''
+                        if url_param:
+                            result_urls.append(url_param)
+                
+                # Try to scrape the result URLs
+                for url in result_urls:
+                    try:
+                        content = fetch_with_retry(url, max_retries=2, timeout=10)
+                        if content:
+                            page_soup = BeautifulSoup(content, 'html.parser')
+                            # Extract paragraphs that might contain revenue info
+                            for elem in page_soup.find_all(['p', 'div', 'table']):
+                                elem_text = elem.get_text(strip=True)
+                                if any(keyword in elem_text.lower() for keyword in FINANCIAL_KEYWORDS):
+                                    search_results.append(elem_text)
+                    except Exception as e:
+                        print(f"Error scraping search result URL {url}: {e}")
+                        continue
+                    
             except Exception as e:
                 print(f"Error searching Google for query '{query}': {e}")
         
@@ -589,15 +764,95 @@ def search_google_for_revenue(company_name, country=None):
             if revenue_figure != "Not Found":
                 return revenue_figure
                 
-        return "Not Found"
+        # If Google search doesn't work, try DuckDuckGo as fallback
+        return search_duckduckgo_for_revenue(company_name, country, domain)
+        
     except Exception as e:
         print(f"Error in Google search function: {e}")
+        # Try DuckDuckGo as fallback
+        return search_duckduckgo_for_revenue(company_name, country, domain)
+
+def search_serpapi_for_revenue(company_name, country=None, domain=None, api_key=None):
+    """Search using SerpAPI for company revenue information"""
+    if not api_key:
+        print("No SerpAPI key found. Skipping SerpAPI search.")
+        return "Not Found"
+        
+    try:
+        print(f"Searching via SerpAPI for {company_name} revenue...")
+        
+        # Build the query with domain, company name, country, and trusted sources
+        domain_part = f"site:{domain} OR " if domain else ""
+        trusted_sources = " OR ".join([f"site:{site}" for site in TRUSTED_SOURCES[:3]])
+        
+        # Build the search query for the most recent year
+        query = f"{domain_part}{company_name} annual revenue {PRIORITY_YEARS[0]} {country or ''} ({trusted_sources})"
+        
+        # Make request to SerpAPI
+        params = {
+            'api_key': api_key,
+            'q': query,
+            'num': 10,  # Get top 10 results
+        }
+        
+        response = requests.get('https://serpapi.com/search', params=params)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        # Process the search results
+        search_results = []
+        
+        # Extract snippets from organic results
+        if 'organic_results' in data:
+            for result in data['organic_results'][:5]:  # Limit to top 5
+                if 'snippet' in result:
+                    search_results.append(result['snippet'])
+                    
+                # Try to fetch and scrape the linked pages
+                if 'link' in result:
+                    try:
+                        content = fetch_with_retry(result['link'], max_retries=1, timeout=10)
+                        if content:
+                            soup = BeautifulSoup(content, 'html.parser')
+                            # Extract paragraphs with financial keywords
+                            for p in soup.find_all(['p', 'div', 'table']):
+                                p_text = p.get_text(strip=True)
+                                if any(kw in p_text.lower() for kw in FINANCIAL_KEYWORDS):
+                                    search_results.append(p_text)
+                    except Exception as e:
+                        print(f"Error scraping result link {result['link']}: {e}")
+        
+        # Add any knowledge graph data if available
+        if 'knowledge_graph' in data and 'description' in data['knowledge_graph']:
+            search_results.append(data['knowledge_graph']['description'])
+            
+        # Add answer box if available
+        if 'answer_box' in data and 'snippet' in data['answer_box']:
+            search_results.append(data['answer_box']['snippet'])
+            
+        # Combine all text
+        all_text = " ".join(search_results)
+        
+        # Extract revenue figure
+        if all_text:
+            revenue_figure = extract_revenue_with_context(all_text)
+            if revenue_figure != "Not Found":
+                return revenue_figure
+                
+        return "Not Found"
+        
+    except Exception as e:
+        print(f"Error in SerpAPI search: {e}")
         return "Not Found"
 
 def scrape_url_for_revenue(url, customer_name=None, country=None):
     """Enhanced main function to scrape a URL for revenue information"""
     try:
         url = normalize_url(url)
+        domain = get_domain(url)
+        
+        print(f"Processing: URL={url}, Customer={customer_name}, Country={country}")
         
         # Find potential financial pages
         financial_pages = find_financial_pages(url)
@@ -605,6 +860,8 @@ def scrape_url_for_revenue(url, customer_name=None, country=None):
         if not financial_pages:
             # If no financial pages found, try the main URL
             financial_pages = [url]
+        
+        print(f"Found {len(financial_pages)} potential financial pages to scrape")
         
         # Scrape up to 8 pages concurrently
         pages_to_search = financial_pages[:8]
@@ -628,13 +885,24 @@ def scrape_url_for_revenue(url, customer_name=None, country=None):
             combined_text = ' '.join(all_text)
             revenue_figure = extract_revenue_with_context(combined_text)
             if revenue_figure != "Not Found":
+                print(f"Found revenue from website: {revenue_figure}")
                 return revenue_figure
         
-        # If no revenue found on website, try Google search if customer name is provided
+        # If no revenue found on website and customer name is provided, try search engines
         if customer_name:
-            print(f"No revenue found on website, trying Google search for {customer_name}...")
-            revenue_from_google = search_google_for_revenue(customer_name, country)
-            return revenue_from_google
+            print(f"No revenue found on website, trying search engines for {customer_name}...")
+            # Try Google search first (which includes SerpAPI if available)
+            revenue_from_search = search_google_for_revenue(customer_name, country, domain)
+            
+            if revenue_from_search != "Not Found":
+                print(f"Found revenue from search: {revenue_from_search}")
+                return revenue_from_search
+                
+            # If Google fails, try DuckDuckGo directly
+            revenue_from_ddg = search_duckduckgo_for_revenue(customer_name, country, domain)
+            if revenue_from_ddg != "Not Found":
+                print(f"Found revenue from DuckDuckGo: {revenue_from_ddg}")
+                return revenue_from_ddg
         
         return "Not Found"
     
@@ -655,6 +923,7 @@ def scrape_endpoint():
         customer_name = data.get('customerName')  # Optional customer name
         country = data.get('country')  # Optional headquarter country
         
+        print(f"API request received - URL: {url}, Customer: {customer_name}, Country: {country}")
         revenue = scrape_url_for_revenue(url, customer_name, country)
         
         return jsonify({
@@ -665,6 +934,7 @@ def scrape_endpoint():
         })
     
     except Exception as e:
+        print(f"API error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/batch-scrape', methods=['POST'])
