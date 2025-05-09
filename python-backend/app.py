@@ -19,7 +19,7 @@ import time
 from urllib.parse import urlparse, urljoin, quote_plus
 import concurrent.futures
 import os
-from googletrans import Translator
+import deepl
 import json
 from dotenv import load_dotenv
 
@@ -171,16 +171,24 @@ def get_domain(url):
     return parsed_url.netloc
 
 def translate_keywords(keywords, target_language):
-    """Translate financial keywords to target language"""
+    """Translate financial keywords to target language using DeepL"""
     try:
-        translator = Translator()
+        # Get DeepL API key from environment variables
+        auth_key = os.environ.get('DEEPL_API_KEY')
+        if not auth_key:
+            print("DeepL API key not found in environment variables")
+            return keywords  # Return original keywords if API key not found
+        
+        # Initialize DeepL translator
+        translator = deepl.Translator(auth_key)
         translated = []
         
         for keyword in keywords:
             try:
-                translation = translator.translate(keyword, dest=target_language)
-                if translation and translation.text:
-                    translated.append(translation.text.lower())
+                # Translate using DeepL
+                result = translator.translate_text(keyword, target_lang=target_language.upper())
+                if result and result.text:
+                    translated.append(result.text.lower())
             except Exception as e:
                 print(f"Error translating keyword '{keyword}': {e}")
                 translated.append(keyword)  # Keep original if translation fails
@@ -694,17 +702,30 @@ def search_google_for_revenue(company_name, country=None, domain=None):
         
         # Add local language queries if available
         if local_language and local_language != 'en':
-            # Translate key terms
-            translator = Translator()
+            # Translate key terms using DeepL
             try:
-                revenue_translation = translator.translate("annual revenue", dest=local_language).text
-                year_translation = translator.translate("year", dest=local_language).text
-                financial_translation = translator.translate("financial results", dest=local_language).text
-                
-                # Add localized queries with years
-                for year in PRIORITY_YEARS:
-                    search_queries.append(f"{company_name} {revenue_translation} {year}")
-                    search_queries.append(f"{company_name} {financial_translation} {year}")
+                # Get DeepL API key from environment variables
+                auth_key = os.environ.get('DEEPL_API_KEY')
+                if auth_key:
+                    translator = deepl.Translator(auth_key)
+                    
+                    # Translate key financial terms
+                    revenue_translation = translator.translate_text(
+                        "annual revenue", target_lang=local_language.upper()
+                    ).text
+                    
+                    year_translation = translator.translate_text(
+                        "year", target_lang=local_language.upper()
+                    ).text
+                    
+                    financial_translation = translator.translate_text(
+                        "financial results", target_lang=local_language.upper()
+                    ).text
+                    
+                    # Add localized queries with years
+                    for year in PRIORITY_YEARS:
+                        search_queries.append(f"{company_name} {revenue_translation} {year}")
+                        search_queries.append(f"{company_name} {financial_translation} {year}")
             except Exception as e:
                 print(f"Translation error: {e}")
         
@@ -971,3 +992,4 @@ if __name__ == '__main__':
     # Get port from environment variable for AWS compatibility
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=False, host='0.0.0.0', port=port)
+
