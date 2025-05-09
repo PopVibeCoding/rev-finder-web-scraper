@@ -1,4 +1,3 @@
-
 """
 Revenue Scraper API
 
@@ -16,9 +15,11 @@ import requests
 from bs4 import BeautifulSoup
 import re
 import time
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, quote_plus
 import concurrent.futures
 import os
+from googletrans import Translator
+import json
 
 app = Flask(__name__)
 
@@ -43,46 +44,38 @@ FINANCIAL_KEYWORDS = [
     'annual report', '10-k', '10k', 'form 10-k', 'sec filing'
 ]
 
-FINANCIAL_PAGES = [
-    'investor', 'investors', 'investor-relations', 'ir',
-    'about', 'about-us', 'company', 'corporate',
-    'finance', 'financial', 'financials',
-    'annual-report', 'quarterly-report', 'earnings-report',
-    'results', 'earnings', 'press', 'news',
-    'reports', 'financial-reports', 'annual-results',
-    '10k', '10-k', 'sec-filings', 'sec'
-]
+# Year priority order: 2025, 2024, 2023
+PRIORITY_YEARS = ['2025', '2024', '2023']
 
-# Enhanced regex patterns to extract monetary values with year context
-MONETARY_PATTERNS = [
-    # Patterns with year context (2023/2024)
-    r'(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?revenue.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'revenue.*?(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?sales.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'sales.*?(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-
-    # Generic revenue patterns
-    r'\$([\d,.]+)\s*(million|billion|trillion|m|b|t)\s*(?:in|of)?\s*(?:annual)?\s*revenue',
-    r'revenue\s*(?:of|was|is|at|:)?\s*\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'([\d,.]+)\s*(million|billion|trillion)\s*(?:dollars|usd)?\s*(?:in|of)?\s*(?:annual)?\s*revenue',
-    
-    # Currency symbols with values
-    r'\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'€([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'£([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'¥([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    
-    # Other revenue statement patterns
-    r'revenue of \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'revenue of ([\d,.]+)\s*(million|billion|trillion)\s*(dollars|usd)',
-    r'revenue: \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'revenue: ([\d,.]+)\s*(million|billion|trillion)\s*(dollars|usd)',
-    r'revenue was \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'revenue reached \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'total revenue (?:of|was|is|:)? \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'([\d,.]+)\s*(million|billion|trillion)\s*in (?:total)?\s*revenue',
-    r'annual revenue (?:of|was|is|:)? \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-]
+# Languages to look for when country is provided
+COUNTRY_LANGUAGE_MAP = {
+    'USA': 'en',
+    'United States': 'en',
+    'UK': 'en',
+    'United Kingdom': 'en',
+    'France': 'fr',
+    'Germany': 'de',
+    'Spain': 'es',
+    'Italy': 'it',
+    'Japan': 'ja',
+    'China': 'zh',
+    'Russia': 'ru',
+    'Brazil': 'pt',
+    'Mexico': 'es',
+    'Canada': 'en',
+    'India': 'en',
+    'Australia': 'en',
+    'Netherlands': 'nl',
+    'Sweden': 'sv',
+    'Norway': 'no',
+    'Denmark': 'da',
+    'Finland': 'fi',
+    'South Korea': 'ko',
+    'Portugal': 'pt',
+    'Greece': 'el',
+    'Turkey': 'tr',
+    # Add more country-language mappings as needed
+}
 
 # Request headers to simulate a real browser for better crawling
 HEADERS = {
@@ -144,6 +137,40 @@ def get_domain(url):
     url = normalize_url(url)
     parsed_url = urlparse(url)
     return parsed_url.netloc
+
+def translate_keywords(keywords, target_language):
+    """Translate financial keywords to target language"""
+    try:
+        translator = Translator()
+        translated = []
+        
+        for keyword in keywords:
+            try:
+                translation = translator.translate(keyword, dest=target_language)
+                if translation and translation.text:
+                    translated.append(translation.text.lower())
+            except Exception as e:
+                print(f"Error translating keyword '{keyword}': {e}")
+                translated.append(keyword)  # Keep original if translation fails
+                
+        return translated
+    except Exception as e:
+        print(f"Translation service error: {e}")
+        return keywords  # Return original keywords if translation fails
+
+def get_language_for_country(country):
+    """Get language code for a given country"""
+    if not country:
+        return 'en'
+        
+    # Normalize country name by removing spaces and converting to lowercase
+    normalized_country = country.strip().lower()
+    
+    for c, lang in COUNTRY_LANGUAGE_MAP.items():
+        if c.lower() == normalized_country:
+            return lang
+            
+    return 'en'  # Default to English if country not found
 
 def find_financial_pages(base_url, max_pages=10):
     """Find potential financial pages on a website with improved search"""
@@ -242,19 +269,52 @@ def extract_revenue_with_context(text, prefer_recent=True):
     text = text.replace('$b', '$ billion').replace('$m', '$ million').replace('$t', '$ trillion')
     text = text.replace('$bn', '$ billion').replace('$mn', '$ million').replace('$tn', '$ trillion')
     
-    # Specific search for 2024 or 2023 revenue (prioritizing 2024)
-    year_specific_patterns = [
-        r'(?:2024|fy\s?(?:20)?24).*?revenue.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-        r'revenue.*?(?:2024|fy\s?(?:20)?24).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-        r'(?:2024|fy\s?(?:20)?24).*?sales.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-        r'sales.*?(?:2024|fy\s?(?:20)?24).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-        r'(?:2023|fy\s?(?:20)?23).*?revenue.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-        r'revenue.*?(?:2023|fy\s?(?:20)?23).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-        r'(?:2023|fy\s?(?:20)?23).*?sales.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-        r'sales.*?(?:2023|fy\s?(?:20)?23).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+    # Year-specific patterns with priority: 2025, 2024, 2023
+    year_specific_patterns = []
+    
+    # Generate patterns for each priority year
+    for year in PRIORITY_YEARS:
+        short_year = year[-2:]  # Get last 2 digits (e.g., "23" from "2023")
+        year_patterns = [
+            f'(?:{year}|fy\\s?(?:20)?{short_year}).*?revenue.*?\\$([\d,.]+)\\s*(million|billion|trillion|m|b|t)',
+            f'revenue.*?(?:{year}|fy\\s?(?:20)?{short_year}).*?\\$([\d,.]+)\\s*(million|billion|trillion|m|b|t)',
+            f'(?:{year}|fy\\s?(?:20)?{short_year}).*?sales.*?\\$([\d,.]+)\\s*(million|billion|trillion|m|b|t)',
+            f'sales.*?(?:{year}|fy\\s?(?:20)?{short_year}).*?\\$([\d,.]+)\\s*(million|billion|trillion|m|b|t)',
+        ]
+        year_specific_patterns.extend(year_patterns)
+    
+    # Generic revenue patterns (from existing code)
+    monetary_patterns = [
+        # Patterns with year context (2023/2024)
+        r'(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?revenue.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'revenue.*?(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?sales.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'sales.*?(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+
+        # Generic revenue patterns
+        r'\$([\d,.]+)\s*(million|billion|trillion|m|b|t)\s*(?:in|of)?\s*(?:annual)?\s*revenue',
+        r'revenue\s*(?:of|was|is|at|:)?\s*\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'([\d,.]+)\s*(million|billion|trillion)\s*(?:dollars|usd)?\s*(?:in|of)?\s*(?:annual)?\s*revenue',
+        
+        # Currency symbols with values
+        r'\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'€([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'£([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'¥([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        
+        # Other revenue statement patterns
+        r'revenue of \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'revenue of ([\d,.]+)\s*(million|billion|trillion)\s*(dollars|usd)',
+        r'revenue: \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'revenue: ([\d,.]+)\s*(million|billion|trillion)\s*(dollars|usd)',
+        r'revenue was \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'revenue reached \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'total revenue (?:of|was|is|:)? \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'([\d,.]+)\s*(million|billion|trillion)\s*in (?:total)?\s*revenue',
+        r'annual revenue (?:of|was|is|:)? \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
     ]
     
-    # First try to find year-specific matches (2024/2023)
+    # First try to find year-specific matches (2025/2024/2023)
     for pattern in year_specific_patterns:
         matches = re.finditer(pattern, text, re.IGNORECASE)
         
@@ -272,12 +332,20 @@ def extract_revenue_with_context(text, prefer_recent=True):
             amount = match.group(1)
             scale = match.group(2).lower() if len(match.groups()) > 1 else ''
             
-            # Determine year - prioritize 2024, then 2023
+            # Determine year - prioritize 2025, then 2024, then 2023
             year = None
-            if '2024' in context or 'fy24' in context or 'fy 24' in context or 'fy2024' in context or 'fy 2024' in context:
-                year = 2024
-            elif '2023' in context or 'fy23' in context or 'fy 23' in context or 'fy2023' in context or 'fy 2023' in context:
-                year = 2023
+            for priority_year in PRIORITY_YEARS:
+                short_year = priority_year[-2:]  # Last 2 digits
+                year_patterns = [
+                    priority_year, 
+                    f'fy{short_year}',
+                    f'fy {short_year}', 
+                    f'fy20{short_year}', 
+                    f'fy 20{short_year}'
+                ]
+                if any(p in context for p in year_patterns):
+                    year = int(priority_year)
+                    break
             
             # Determine the currency symbol
             prefix = ''
@@ -292,10 +360,14 @@ def extract_revenue_with_context(text, prefer_recent=True):
             
             # Score the match by relevance (quality of context)
             score = 0
-            if year == 2024:
-                score += 100  # Heavily prioritize 2024 data
+            
+            # Score based on year priority
+            if year == 2025:
+                score += 200  # Highest priority
+            elif year == 2024:
+                score += 100  # Medium priority
             elif year == 2023:
-                score += 50   # Next prioritize 2023 data
+                score += 50   # Lowest priority
                 
             # Additional context scoring
             if 'annual revenue' in context:
@@ -323,7 +395,7 @@ def extract_revenue_with_context(text, prefer_recent=True):
     
     # If no year-specific matches found, try generic patterns
     if not all_matches:
-        for pattern in MONETARY_PATTERNS:
+        for pattern in monetary_patterns:
             matches = re.finditer(pattern, text, re.IGNORECASE)
             
             for match in matches:
@@ -455,7 +527,74 @@ def scrape_page_for_revenue(url):
         print(f"Error scraping {url}: {e}")
         return ""
 
-def scrape_url_for_revenue(url):
+def search_google_for_revenue(company_name, country=None):
+    """Search Google for company revenue information using default and local language"""
+    try:
+        print(f"Searching Google for {company_name} revenue...")
+        search_results = []
+        
+        # Determine the language to use based on the country
+        local_language = get_language_for_country(country) if country else None
+        
+        # Build search queries with proper year priorities
+        search_queries = []
+        
+        # English queries with priority years
+        for year in PRIORITY_YEARS:
+            search_queries.append(f"{company_name} annual revenue {year}")
+            search_queries.append(f"{company_name} yearly revenue {year}")
+            search_queries.append(f"{company_name} financial results {year}")
+        
+        # Add local language queries if available
+        if local_language and local_language != 'en':
+            # Translate key terms
+            translator = Translator()
+            try:
+                revenue_translation = translator.translate("annual revenue", dest=local_language).text
+                year_translation = translator.translate("year", dest=local_language).text
+                financial_translation = translator.translate("financial results", dest=local_language).text
+                
+                # Add localized queries with years
+                for year in PRIORITY_YEARS:
+                    search_queries.append(f"{company_name} {revenue_translation} {year}")
+                    search_queries.append(f"{company_name} {financial_translation} {year}")
+            except Exception as e:
+                print(f"Translation error: {e}")
+        
+        # Search each query (limit to 3 to avoid rate limiting)
+        for query in search_queries[:3]:
+            search_url = f"https://www.google.com/search?q={quote_plus(query)}"
+            try:
+                html_content = fetch_with_retry(search_url)
+                if not html_content:
+                    continue
+                    
+                soup = BeautifulSoup(html_content, 'html.parser')
+                
+                # Extract search result descriptions
+                search_results_elements = soup.select(".BNeawe")
+                
+                for result in search_results_elements:
+                    result_text = result.get_text(strip=True)
+                    search_results.append(result_text)
+            except Exception as e:
+                print(f"Error searching Google for query '{query}': {e}")
+        
+        # Combine all search result text
+        all_text = " ".join(search_results)
+        
+        # Try to extract revenue information from the combined search results
+        if all_text:
+            revenue_figure = extract_revenue_with_context(all_text)
+            if revenue_figure != "Not Found":
+                return revenue_figure
+                
+        return "Not Found"
+    except Exception as e:
+        print(f"Error in Google search function: {e}")
+        return "Not Found"
+
+def scrape_url_for_revenue(url, customer_name=None, country=None):
     """Enhanced main function to scrape a URL for revenue information"""
     try:
         url = normalize_url(url)
@@ -488,7 +627,14 @@ def scrape_url_for_revenue(url):
         if all_text:
             combined_text = ' '.join(all_text)
             revenue_figure = extract_revenue_with_context(combined_text)
-            return revenue_figure
+            if revenue_figure != "Not Found":
+                return revenue_figure
+        
+        # If no revenue found on website, try Google search if customer name is provided
+        if customer_name:
+            print(f"No revenue found on website, trying Google search for {customer_name}...")
+            revenue_from_google = search_google_for_revenue(customer_name, country)
+            return revenue_from_google
         
         return "Not Found"
     
@@ -506,11 +652,16 @@ def scrape_endpoint():
             return jsonify({'error': 'URL is required'}), 400
         
         url = data['url']
-        revenue = scrape_url_for_revenue(url)
+        customer_name = data.get('customerName')  # Optional customer name
+        country = data.get('country')  # Optional headquarter country
+        
+        revenue = scrape_url_for_revenue(url, customer_name, country)
         
         return jsonify({
             'url': url,
-            'revenue': revenue
+            'revenue': revenue,
+            'customerName': customer_name,
+            'country': country
         })
     
     except Exception as e:

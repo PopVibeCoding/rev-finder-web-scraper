@@ -52,21 +52,30 @@ const makeRequestWithRetry = async <T>(
 
 /**
  * Scrapes a URL for revenue information using the Python backend API
+ * Now includes customer name and country for enhanced search
  */
-export const scrapeUrlForRevenue = async (url: string): Promise<string> => {
+export const scrapeUrlForRevenue = async (
+  url: string,
+  customerName?: string,
+  country?: string
+): Promise<string> => {
   try {
     if (!url.startsWith('http')) {
       url = 'https://' + url;
     }
     
-    console.log(`Scraping URL: ${url}`);
+    console.log(`Scraping URL: ${url} for customer: ${customerName || 'Unknown'} from ${country || 'Unknown'}`);
     
     const response = await makeRequestWithRetry<{ url: string; revenue: string }>(
       `${API_BASE_URL}/api/scrape`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
+        body: JSON.stringify({ 
+          url,
+          customerName,
+          country
+        })
       }
     );
     
@@ -80,6 +89,7 @@ export const scrapeUrlForRevenue = async (url: string): Promise<string> => {
 
 /**
  * Process CSV data by adding revenue information
+ * Now includes support for customer name and country columns
  */
 export const processCSVData = async (
   rows: string[][],
@@ -98,6 +108,10 @@ export const processCSVData = async (
     try {
       const url = outputRows[i][0];
       
+      // Get customer name and country if available (columns 1 and 2)
+      const customerName = outputRows[i][1] || "";
+      const country = outputRows[i][2] || "";
+      
       // Update progress
       onProgress(
         (i / (outputRows.length - 1)) * 100,
@@ -105,8 +119,8 @@ export const processCSVData = async (
         i
       );
       
-      // Scrape revenue for this URL
-      const revenue = await scrapeUrlForRevenue(url);
+      // Scrape revenue for this URL with enhanced parameters
+      const revenue = await scrapeUrlForRevenue(url, customerName, country);
       
       // Format the revenue in USD with proper formatting
       const formattedRevenue = formatCurrencyToUSD(revenue);
