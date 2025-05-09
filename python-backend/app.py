@@ -1,3 +1,4 @@
+
 """
 Revenue Scraper API
 
@@ -31,86 +32,134 @@ CORS(app, resources={r"/api/*": {"origins": [
     # Add your production domain here when deployed
 ]}})
 
-# Constants similar to the JavaScript version
+# Constants similar to the JavaScript version but expanded
 FINANCIAL_KEYWORDS = [
-    'revenue', 'annual revenue', 'annual revenue 2024', 
-    'annual revenue 2025', 'turnover 2024', 'turnover 2025',
-    'sales', 'turnover', 'income', 'earnings',
-    'financial results', 'financial highlights',
-    'million', 'billion', 'trillion',
-    'fiscal year', 'fy'
+    'revenue', 'annual revenue', 'annual revenue 2024', 'annual revenue 2023',
+    'annual revenue 2025', 'turnover 2024', 'turnover 2025', 'turnover 2023',
+    'sales', 'turnover', 'income', 'earnings', 'net sales',
+    'financial results', 'financial highlights', 'financial performance',
+    'million', 'billion', 'trillion', 'yearly revenue', 'quarterly revenue',
+    'fiscal year', 'fy', 'fy2024', 'fy2023', 'fy 2024', 'fy 2023',
+    'annual report', '10-k', '10k', 'form 10-k', 'sec filing'
 ]
 
-FINANCIAL_PATHS = [
+FINANCIAL_PAGES = [
     'investor', 'investors', 'investor-relations', 'ir',
     'about', 'about-us', 'company', 'corporate',
     'finance', 'financial', 'financials',
-    'annual-report', 'quarterly-report',
-    'results', 'earnings', 'press', 'news'
+    'annual-report', 'quarterly-report', 'earnings-report',
+    'results', 'earnings', 'press', 'news',
+    'reports', 'financial-reports', 'annual-results',
+    '10k', '10-k', 'sec-filings', 'sec'
 ]
 
-# Regex patterns to extract monetary values
+# Enhanced regex patterns to extract monetary values with year context
 MONETARY_PATTERNS = [
-    # $X million/billion/trillion
+    # Patterns with year context (2023/2024)
+    r'(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?revenue.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+    r'revenue.*?(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+    r'(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?sales.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+    r'sales.*?(?:20[23][0-9]|FY\s?(?:20)?[23][0-9]).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+
+    # Generic revenue patterns
+    r'\$([\d,.]+)\s*(million|billion|trillion|m|b|t)\s*(?:in|of)?\s*(?:annual)?\s*revenue',
+    r'revenue\s*(?:of|was|is|at|:)?\s*\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+    r'([\d,.]+)\s*(million|billion|trillion)\s*(?:dollars|usd)?\s*(?:in|of)?\s*(?:annual)?\s*revenue',
+    
+    # Currency symbols with values
     r'\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    # X million/billion/trillion dollars
-    r'([\d,.]+)\s*(million|billion|trillion)\s*(dollars|usd)',
-    # €X million/billion/trillion
     r'€([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    # £X million/billion/trillion
     r'£([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    # ¥X million/billion/trillion
     r'¥([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    # General revenue statement patterns
+    
+    # Other revenue statement patterns
     r'revenue of \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
     r'revenue of ([\d,.]+)\s*(million|billion|trillion)\s*(dollars|usd)',
     r'revenue: \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
     r'revenue: ([\d,.]+)\s*(million|billion|trillion)\s*(dollars|usd)',
     r'revenue was \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
     r'revenue reached \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'total revenue of \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
-    r'([\d,.]+)\s*(million|billion|trillion)\s*in revenue'
+    r'total revenue (?:of|was|is|:)? \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+    r'([\d,.]+)\s*(million|billion|trillion)\s*in (?:total)?\s*revenue',
+    r'annual revenue (?:of|was|is|:)? \$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
 ]
 
-# Request headers to simulate a real browser
+# Request headers to simulate a real browser for better crawling
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.5'
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Referer': 'https://www.google.com/',
+    'DNT': '1',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'cross-site',
+    'Cache-Control': 'max-age=0'
 }
 
-def fetch_with_retry(url, max_retries=3, timeout=10):
-    """Fetch URL content with retry logic"""
+def fetch_with_retry(url, max_retries=3, timeout=15):
+    """Fetch URL content with retry logic and better error handling"""
     for attempt in range(max_retries):
         try:
             response = requests.get(url, headers=HEADERS, timeout=timeout)
             response.raise_for_status()
             return response.text
+        except requests.exceptions.SSLError:
+            # Try without HTTPS if SSL fails
+            if url.startswith('https://'):
+                try:
+                    http_url = url.replace('https://', 'http://')
+                    print(f"SSL Error, trying HTTP: {http_url}")
+                    response = requests.get(http_url, headers=HEADERS, timeout=timeout)
+                    response.raise_for_status()
+                    return response.text
+                except Exception:
+                    pass
+            if attempt == max_retries - 1:
+                raise
         except requests.RequestException as e:
             print(f"Attempt {attempt+1}/{max_retries} failed for {url}: {e}")
             if attempt == max_retries - 1:
                 raise
-            time.sleep(2 ** attempt)  # Exponential backoff
+            delay = 2 ** attempt  # Exponential backoff
+            time.sleep(delay)
     
     return None
 
-def find_financial_pages(base_url):
-    """Find potential financial pages on a website"""
-    try:
-        # Parse the URL to get the domain
-        parsed_url = urlparse(base_url)
-        domain = parsed_url.netloc
+def normalize_url(url):
+    """Normalize URL to ensure it has a scheme and is properly formatted"""
+    if not url.startswith(('http://', 'https://')):
+        url = 'https://' + url
+    
+    # Remove trailing slash if present
+    if url.endswith('/'):
+        url = url[:-1]
         
-        # Ensure we have a valid domain
-        if not domain:
-            if not base_url.startswith(('http://', 'https://')):
-                base_url = 'https://' + base_url
-                parsed_url = urlparse(base_url)
-                domain = parsed_url.netloc
+    return url
+
+def get_domain(url):
+    """Extract domain from URL"""
+    url = normalize_url(url)
+    parsed_url = urlparse(url)
+    return parsed_url.netloc
+
+def find_financial_pages(base_url, max_pages=10):
+    """Find potential financial pages on a website with improved search"""
+    try:
+        base_url = normalize_url(base_url)
+        domain = get_domain(base_url)
         
         # Get the homepage content
-        homepage_url = f"{parsed_url.scheme or 'https'}://{domain}"
-        html_content = fetch_with_retry(homepage_url)
+        homepage_url = f"https://{domain}"
+        try:
+            html_content = fetch_with_retry(homepage_url)
+        except:
+            try:
+                html_content = fetch_with_retry(f"http://{domain}")
+            except:
+                return []
         
         if not html_content:
             return []
@@ -127,57 +176,184 @@ def find_financial_pages(base_url):
         
         # Check each link against our financial paths
         for link in links:
-            href = link['href']
-            
+            href = link.get('href', '').strip()
+            if not href or href.startswith('#') or href.startswith('javascript:'):
+                continue
+                
             # Create absolute URL if it's relative
             if not href.startswith(('http://', 'https://')):
                 href = urljoin(homepage_url, href)
             
+            # Ensure the link is from the same domain
+            link_domain = get_domain(href)
+            if domain not in link_domain and link_domain not in domain:
+                continue
+                
             # Skip if we've already seen this URL
             if href in seen_urls:
                 continue
             
             seen_urls.add(href)
             
-            # Check if the URL path contains any of our financial keywords
+            # Enhanced check for financial pages:
+            # 1. Check URL path for financial keywords
             path = urlparse(href).path.lower()
-            if any(keyword in path for keyword in FINANCIAL_PATHS):
+            
+            # 2. Check link text for financial keywords
+            link_text = link.get_text().lower()
+            
+            if (any(keyword in path for keyword in FINANCIAL_PAGES) or
+                any(keyword in link_text for keyword in FINANCIAL_KEYWORDS)):
                 financial_pages.append(href)
         
         # Add additional potential financial pages
-        for path in FINANCIAL_PATHS:
+        for path in FINANCIAL_PAGES:
             financial_pages.append(f"{homepage_url}/{path}")
         
-        # Add potential subdomains
+        # Add potential subdomains for investor relations
         financial_pages.append(f"https://investors.{domain}")
         financial_pages.append(f"https://investor.{domain}")
         financial_pages.append(f"https://ir.{domain}")
+        financial_pages.append(f"http://investors.{domain}")
+        financial_pages.append(f"http://investor.{domain}")
+        financial_pages.append(f"http://ir.{domain}")
         
-        return list(set(financial_pages))  # Remove duplicates
+        # Specific pages that often contain revenue information
+        financial_pages.append(f"{homepage_url}/about")
+        financial_pages.append(f"{homepage_url}/about-us")
+        financial_pages.append(f"{homepage_url}/annual-report")
+        financial_pages.append(f"{homepage_url}/financial-results")
+        
+        # Limit to unique URLs and max_pages
+        return list(set(financial_pages))[:max_pages]
     
     except Exception as e:
         print(f"Error finding financial pages for {base_url}: {e}")
         return []
 
-def extract_revenue_figure(text):
-    """Extract revenue figures from text using regex patterns"""
-    for pattern in MONETARY_PATTERNS:
+def extract_revenue_with_context(text, prefer_recent=True):
+    """Extract revenue figures from text with enhanced context awareness"""
+    all_matches = []
+    
+    # Process text to make pattern matching more reliable
+    text = text.lower()
+    
+    # Replace common abbreviations
+    text = text.replace('$b', '$ billion').replace('$m', '$ million').replace('$t', '$ trillion')
+    text = text.replace('$bn', '$ billion').replace('$mn', '$ million').replace('$tn', '$ trillion')
+    
+    # Specific search for 2024 or 2023 revenue (prioritizing 2024)
+    year_specific_patterns = [
+        r'(?:2024|fy\s?(?:20)?24).*?revenue.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'revenue.*?(?:2024|fy\s?(?:20)?24).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'(?:2024|fy\s?(?:20)?24).*?sales.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'sales.*?(?:2024|fy\s?(?:20)?24).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'(?:2023|fy\s?(?:20)?23).*?revenue.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'revenue.*?(?:2023|fy\s?(?:20)?23).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'(?:2023|fy\s?(?:20)?23).*?sales.*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+        r'sales.*?(?:2023|fy\s?(?:20)?23).*?\$([\d,.]+)\s*(million|billion|trillion|m|b|t)',
+    ]
+    
+    # First try to find year-specific matches (2024/2023)
+    for pattern in year_specific_patterns:
         matches = re.finditer(pattern, text, re.IGNORECASE)
         
         for match in matches:
-            # Get the matched text and surrounding context
-            start_idx = max(0, match.start() - 50)
-            end_idx = min(len(text), match.end() + 50)
-            surrounding_text = text[start_idx:end_idx].lower()
+            # Get surrounding text for context validation
+            start_idx = max(0, match.start() - 100)
+            end_idx = min(len(text), match.end() + 100)
+            context = text[start_idx:end_idx].lower()
             
-            # Check if the match is in a revenue context
-            has_revenue_context = any(keyword.lower() in surrounding_text for keyword in FINANCIAL_KEYWORDS)
+            # Skip if this appears to be about profits, not revenue
+            if ('profit' in context and 'revenue' not in context) or ('net income' in context and 'revenue' not in context):
+                continue
+                
+            # Extract match details
+            amount = match.group(1)
+            scale = match.group(2).lower() if len(match.groups()) > 1 else ''
             
-            if has_revenue_context or 'revenue' in surrounding_text:
-                # Format the match
+            # Determine year - prioritize 2024, then 2023
+            year = None
+            if '2024' in context or 'fy24' in context or 'fy 24' in context or 'fy2024' in context or 'fy 2024' in context:
+                year = 2024
+            elif '2023' in context or 'fy23' in context or 'fy 23' in context or 'fy2023' in context or 'fy 2023' in context:
+                year = 2023
+            
+            # Determine the currency symbol
+            prefix = ''
+            if '$' in match.group(0):
+                prefix = '$'
+            elif '€' in match.group(0):
+                prefix = '€'
+            elif '£' in match.group(0):
+                prefix = '£'
+            elif '¥' in match.group(0):
+                prefix = '¥'
+            
+            # Score the match by relevance (quality of context)
+            score = 0
+            if year == 2024:
+                score += 100  # Heavily prioritize 2024 data
+            elif year == 2023:
+                score += 50   # Next prioritize 2023 data
+                
+            # Additional context scoring
+            if 'annual revenue' in context:
+                score += 30
+            elif 'revenue' in context:
+                score += 20
+            elif 'sales' in context:
+                score += 15
+                
+            if 'million' in scale or 'm' == scale:
+                value_str = f"{prefix}{amount} million"
+            elif 'billion' in scale or 'b' == scale:
+                value_str = f"{prefix}{amount} billion"
+            elif 'trillion' in scale or 't' == scale:
+                value_str = f"{prefix}{amount} trillion"
+            else:
+                value_str = f"{prefix}{amount}"
+                
+            all_matches.append({
+                'value': value_str,
+                'score': score,
+                'year': year,
+                'context': context
+            })
+    
+    # If no year-specific matches found, try generic patterns
+    if not all_matches:
+        for pattern in MONETARY_PATTERNS:
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            
+            for match in matches:
+                # Get surrounding text for context validation
+                start_idx = max(0, match.start() - 100)
+                end_idx = min(len(text), match.end() + 100)
+                context = text[start_idx:end_idx].lower()
+                
+                # Check if match is in a revenue context
+                has_revenue_context = (
+                    'revenue' in context or
+                    'sales' in context or
+                    'turnover' in context
+                )
+                
+                # Skip if not in revenue context or if it appears to be about profit
+                if not has_revenue_context or ('profit' in context and 'revenue' not in context):
+                    continue
+                    
+                # Extract match details
                 amount = match.group(1)
                 scale = match.group(2).lower() if len(match.groups()) > 1 else ''
                 
+                # Determine year from context
+                year = None
+                if '2024' in context or 'fy24' in context or 'fy 24' in context:
+                    year = 2024
+                elif '2023' in context or 'fy23' in context or 'fy 23' in context:
+                    year = 2023
+                    
                 # Determine the currency symbol
                 prefix = ''
                 if '$' in match.group(0):
@@ -189,12 +365,47 @@ def extract_revenue_figure(text):
                 elif '¥' in match.group(0):
                     prefix = '¥'
                 
-                return f"{prefix}{amount} {scale}"
+                # Score the match by relevance
+                score = 0
+                if year == 2024:
+                    score += 50
+                elif year == 2023:
+                    score += 25
+                    
+                # Additional context scoring
+                if 'annual revenue' in context:
+                    score += 20
+                elif 'revenue' in context:
+                    score += 15
+                elif 'sales' in context:
+                    score += 10
+                
+                if 'million' in scale or 'm' == scale:
+                    value_str = f"{prefix}{amount} million"
+                elif 'billion' in scale or 'b' == scale:
+                    value_str = f"{prefix}{amount} billion" 
+                elif 'trillion' in scale or 't' == scale:
+                    value_str = f"{prefix}{amount} trillion"
+                else:
+                    value_str = f"{prefix}{amount}"
+                    
+                all_matches.append({
+                    'value': value_str,
+                    'score': score,
+                    'year': year,
+                    'context': context
+                })
     
+    # Sort by score (most relevant first)
+    all_matches.sort(key=lambda x: x['score'], reverse=True)
+    
+    # Return the best match, or "Not Found"
+    if all_matches:
+        return all_matches[0]['value']
     return "Not Found"
 
 def scrape_page_for_revenue(url):
-    """Scrape a single page for revenue information"""
+    """Scrape a single page for revenue information with improved extraction"""
     try:
         html_content = fetch_with_retry(url)
         if not html_content:
@@ -204,21 +415,39 @@ def scrape_page_for_revenue(url):
         soup = BeautifulSoup(html_content, 'html.parser')
         
         # Extract text content from the page
-        text = soup.get_text(separator=' ', strip=True)
+        page_text = soup.get_text(separator=' ', strip=True)
+        
+        # Look for sections that might contain financial information
+        financial_sections = []
+        
+        # Check headings for financial indicators
+        headings = soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+        for heading in headings:
+            heading_text = heading.get_text(strip=True).lower()
+            if any(keyword in heading_text for keyword in FINANCIAL_KEYWORDS):
+                # Get the next siblings until next heading
+                current = heading.next_sibling
+                section_text = heading_text + " "
+                
+                while current and not current.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
+                    if hasattr(current, 'get_text'):
+                        section_text += current.get_text(strip=True) + " "
+                    elif hasattr(current, 'string') and current.string:
+                        section_text += current.string + " "
+                    current = current.next_sibling
+                    
+                financial_sections.append(section_text)
         
         # Look for paragraphs that might contain financial information
-        paragraphs = soup.find_all(['p', 'div', 'section', 'table'])
+        for tag in ['p', 'div', 'section', 'table', 'tr', 'td']:
+            elements = soup.find_all(tag)
+            for elem in elements:
+                elem_text = elem.get_text(strip=True)
+                if any(keyword in elem_text.lower() for keyword in FINANCIAL_KEYWORDS):
+                    financial_sections.append(elem_text)
         
-        # Prioritize content that mentions financial keywords
-        potential_financial_text = []
-        
-        for p in paragraphs:
-            p_text = p.get_text(strip=True)
-            if any(keyword.lower() in p_text.lower() for keyword in FINANCIAL_KEYWORDS):
-                potential_financial_text.append(p_text)
-        
-        # Combine the financial paragraphs with higher weight
-        combined_text = ' '.join(potential_financial_text) + ' ' + text
+        # Combine all text with priority to financial sections
+        combined_text = ' '.join(financial_sections) + ' ' + page_text
         
         return combined_text
     
@@ -227,36 +456,38 @@ def scrape_page_for_revenue(url):
         return ""
 
 def scrape_url_for_revenue(url):
-    """Main function to scrape a URL for revenue information"""
+    """Enhanced main function to scrape a URL for revenue information"""
     try:
-        if not url.startswith(('http://', 'https://')):
-            url = 'https://' + url
+        url = normalize_url(url)
         
         # Find potential financial pages
         financial_pages = find_financial_pages(url)
         
         if not financial_pages:
-            return "Not Found"
+            # If no financial pages found, try the main URL
+            financial_pages = [url]
         
-        # Scrape up to 5 pages concurrently
-        pages_to_search = financial_pages[:5]
-        combined_text = ""
+        # Scrape up to 8 pages concurrently
+        pages_to_search = financial_pages[:8]
+        all_text = []
         
         # Use concurrent futures for parallel scraping
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             future_to_url = {executor.submit(scrape_page_for_revenue, page): page for page in pages_to_search}
             
             for future in concurrent.futures.as_completed(future_to_url):
                 page_url = future_to_url[future]
                 try:
                     page_text = future.result()
-                    combined_text += page_text + ' '
+                    if page_text.strip():
+                        all_text.append(page_text)
                 except Exception as e:
                     print(f"Error processing {page_url}: {e}")
         
         # If we found some text, extract revenue figure
-        if combined_text.strip():
-            revenue_figure = extract_revenue_figure(combined_text)
+        if all_text:
+            combined_text = ' '.join(all_text)
+            revenue_figure = extract_revenue_with_context(combined_text)
             return revenue_figure
         
         return "Not Found"

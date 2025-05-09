@@ -59,6 +59,8 @@ export const scrapeUrlForRevenue = async (url: string): Promise<string> => {
       url = 'https://' + url;
     }
     
+    console.log(`Scraping URL: ${url}`);
+    
     const response = await makeRequestWithRetry<{ url: string; revenue: string }>(
       `${API_BASE_URL}/api/scrape`,
       {
@@ -68,6 +70,7 @@ export const scrapeUrlForRevenue = async (url: string): Promise<string> => {
       }
     );
     
+    console.log(`Got revenue for ${url}:`, response.revenue);
     return response.revenue || "Not Found";
   } catch (error) {
     console.error(`Error calling Python scraper API for ${url}:`, error);
