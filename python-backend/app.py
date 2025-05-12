@@ -1,4 +1,3 @@
-
 """
 Revenue Scraper API
 
@@ -19,34 +18,28 @@ import time
 from urllib.parse import urlparse, urljoin, quote_plus
 import concurrent.futures
 import os
-import libretranslatepy
+from deep_translator import GoogleTranslator
 import json
 from dotenv import load_dotenv
 
 # Load environment variables from .env file if present
 load_dotenv()
 
-# Initialize LibreTranslate client
-def initialize_libre_translate():
+# Initialize GoogleTranslator
+def initialize_translator():
     try:
-        # Check if LIBRETRANSLATE_URL is set in environment variables
-        libretranslate_url = os.environ.get('LIBRETRANSLATE_URL', 'https://libretranslate.com')
-        libretranslate_api_key = os.environ.get('LIBRETRANSLATE_API_KEY', '')
-        
-        print(f"Initializing LibreTranslate with URL: {libretranslate_url}")
-        translator = libretranslatepy.LibreTranslateAPI(libretranslate_url, api_key=libretranslate_api_key)
-        
+        print(f"Initializing GoogleTranslator from deep-translator package")
         # Test connection by getting available languages
-        languages = translator.languages()
-        print(f"LibreTranslate available languages: {languages}")
-        return translator
+        available_languages = GoogleTranslator().get_supported_languages()
+        print(f"GoogleTranslator available languages: {len(available_languages)} languages")
+        return True
     except Exception as e:
-        print(f"Error initializing LibreTranslate: {e}")
+        print(f"Error initializing GoogleTranslator: {e}")
         print("Translation features may not be available")
-        return None
+        return False
 
-# Initialize LibreTranslate on startup
-TRANSLATOR = initialize_libre_translate()
+# Initialize translator on startup
+TRANSLATOR_AVAILABLE = initialize_translator()
 
 app = Flask(__name__)
 
@@ -193,16 +186,17 @@ def get_domain(url):
     return parsed_url.netloc
 
 def translate_keywords(keywords, target_language):
-    """Translate financial keywords to target language using LibreTranslate"""
+    """Translate financial keywords to target language using GoogleTranslator"""
     try:
         # Skip translation if target language is English or translator not available
-        if target_language == 'en' or TRANSLATOR is None:
+        if target_language == 'en' or not TRANSLATOR_AVAILABLE:
             return keywords
             
         translated = []
         for keyword in keywords:
             try:
-                result = TRANSLATOR.translate(keyword, "en", target_language)
+                translator = GoogleTranslator(source='en', target=target_language)
+                result = translator.translate(keyword)
                 translated.append(result.lower())
             except Exception as e:
                 print(f"Error translating keyword '{keyword}': {e}")
@@ -717,12 +711,12 @@ def search_google_for_revenue(company_name, country=None, domain=None):
         
         # Add local language queries if available
         if local_language and local_language != 'en':
-            # Translate key terms using LibreTranslate
+            # Translate key terms using GoogleTranslator
             try:
-                if TRANSLATOR:
+                if TRANSLATOR_AVAILABLE:
                     # Translate key financial terms
-                    revenue_translation = TRANSLATOR.translate("annual revenue", "en", local_language).lower()
-                    financial_translation = TRANSLATOR.translate("financial results", "en", local_language).lower()
+                    revenue_translation = GoogleTranslator(source='en', target=local_language).translate("annual revenue", "en", local_language).lower()
+                    financial_translation = GoogleTranslator(source='en', target=local_language).translate("financial results", "en", local_language).lower()
                     
                     # Add localized queries with years
                     for year in PRIORITY_YEARS:
@@ -781,7 +775,7 @@ def search_google_for_revenue(company_name, country=None, domain=None):
         # Combine all search result text
         all_text = " ".join(search_results)
         
-        # Try to extract revenue information from the combined search results
+        # Extract revenue figure
         if all_text:
             revenue_figure = extract_revenue_with_context(all_text)
             if revenue_figure != "Not Found":
