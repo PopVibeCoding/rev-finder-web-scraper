@@ -1,3 +1,4 @@
+
 """
 Revenue Scraper API
 
@@ -18,53 +19,34 @@ import time
 from urllib.parse import urlparse, urljoin, quote_plus
 import concurrent.futures
 import os
-import argostranslate.package
-import argostranslate.translate
+import libretranslatepy
 import json
 from dotenv import load_dotenv
 
 # Load environment variables from .env file if present
 load_dotenv()
 
-# Initialize Argos Translate (download language packages if needed)
-def initialize_argos_translate():
+# Initialize LibreTranslate client
+def initialize_libre_translate():
     try:
-        # Check if packages are already installed
-        available_packages = argostranslate.package.get_available_packages()
-        if not available_packages:
-            # Download and install package index
-            argostranslate.package.update_package_index()
-            available_packages = argostranslate.package.get_available_packages()
-            
-        # Install common language packages if needed
-        installed_languages = [pkg.from_code for pkg in argostranslate.translate.get_installed_languages()]
+        # Check if LIBRETRANSLATE_URL is set in environment variables
+        libretranslate_url = os.environ.get('LIBRETRANSLATE_URL', 'https://libretranslate.com')
+        libretranslate_api_key = os.environ.get('LIBRETRANSLATE_API_KEY', '')
         
-        common_languages = ['en', 'fr', 'de', 'es', 'it']
-        for lang in common_languages:
-            if lang not in installed_languages and lang != 'en':
-                # Find packages for this language pair
-                packages = [pkg for pkg in available_packages 
-                            if (pkg.from_code == 'en' and pkg.to_code == lang) or
-                               (pkg.from_code == lang and pkg.to_code == 'en')]
-                
-                # Install packages
-                for pkg in packages:
-                    try:
-                        print(f"Installing language package: {pkg.from_code} -> {pkg.to_code}")
-                        argostranslate.package.install_from_path(
-                            argostranslate.package.download_package(pkg)
-                        )
-                    except Exception as e:
-                        print(f"Error installing language package {pkg.from_code}-{pkg.to_code}: {e}")
+        print(f"Initializing LibreTranslate with URL: {libretranslate_url}")
+        translator = libretranslatepy.LibreTranslateAPI(libretranslate_url, api_key=libretranslate_api_key)
         
-        print("Argos Translate initialized successfully")
-        return True
+        # Test connection by getting available languages
+        languages = translator.languages()
+        print(f"LibreTranslate available languages: {languages}")
+        return translator
     except Exception as e:
-        print(f"Error initializing Argos Translate: {e}")
-        return False
+        print(f"Error initializing LibreTranslate: {e}")
+        print("Translation features may not be available")
+        return None
 
-# Initialize Argos Translate on startup
-initialize_argos_translate()
+# Initialize LibreTranslate on startup
+TRANSLATOR = initialize_libre_translate()
 
 app = Flask(__name__)
 
@@ -211,41 +193,16 @@ def get_domain(url):
     return parsed_url.netloc
 
 def translate_keywords(keywords, target_language):
-    """Translate financial keywords to target language using Argos Translate"""
+    """Translate financial keywords to target language using LibreTranslate"""
     try:
-        # Skip translation if target language is English or unsupported
-        if target_language == 'en':
+        # Skip translation if target language is English or translator not available
+        if target_language == 'en' or TRANSLATOR is None:
             return keywords
             
-        # Get installed languages
-        installed_languages = argostranslate.translate.get_installed_languages()
-        from_lang = None
-        to_lang = None
-        
-        # Find the language pair
-        for lang in installed_languages:
-            if lang.code == 'en':
-                from_lang = lang
-            if lang.code == target_language:
-                to_lang = lang
-                
-        # If language pair not found, return original keywords
-        if not from_lang or not to_lang:
-            print(f"Translation from English to {target_language} not supported")
-            return keywords
-            
-        # Get translation function
-        try:
-            translation = from_lang.get_translation(to_lang)
-        except Exception as e:
-            print(f"Error getting translation function: {e}")
-            return keywords
-            
-        # Translate each keyword
         translated = []
         for keyword in keywords:
             try:
-                result = translation.translate(keyword)
+                result = TRANSLATOR.translate(keyword, "en", target_language)
                 translated.append(result.lower())
             except Exception as e:
                 print(f"Error translating keyword '{keyword}': {e}")
@@ -760,28 +717,12 @@ def search_google_for_revenue(company_name, country=None, domain=None):
         
         # Add local language queries if available
         if local_language and local_language != 'en':
-            # Translate key terms using Argos Translate
+            # Translate key terms using LibreTranslate
             try:
-                # Get installed languages
-                installed_languages = argostranslate.translate.get_installed_languages()
-                from_lang = None
-                to_lang = None
-                
-                # Find the language pair
-                for lang in installed_languages:
-                    if lang.code == 'en':
-                        from_lang = lang
-                    if lang.code == local_language:
-                        to_lang = lang
-                        
-                # If language pair found, translate
-                if from_lang and to_lang:
-                    translation = from_lang.get_translation(to_lang)
-                    
+                if TRANSLATOR:
                     # Translate key financial terms
-                    revenue_translation = translation.translate("annual revenue").lower()
-                    year_translation = translation.translate("year").lower()
-                    financial_translation = translation.translate("financial results").lower()
+                    revenue_translation = TRANSLATOR.translate("annual revenue", "en", local_language).lower()
+                    financial_translation = TRANSLATOR.translate("financial results", "en", local_language).lower()
                     
                     # Add localized queries with years
                     for year in PRIORITY_YEARS:
