@@ -5,5 +5,5 @@ requests==2.28.2
 beautifulsoup4==4.12.0
 Werkzeug==2.2.3
 gunicorn==20.1.0
-deepl==1.16.1
+argostranslate==1.8.0
 python-dotenv==1.0.0

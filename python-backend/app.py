@@ -1,4 +1,3 @@
-
 """
 Revenue Scraper API
 
@@ -19,12 +18,53 @@ import time
 from urllib.parse import urlparse, urljoin, quote_plus
 import concurrent.futures
 import os
-import deepl
+import argostranslate.package
+import argostranslate.translate
 import json
 from dotenv import load_dotenv
 
 # Load environment variables from .env file if present
 load_dotenv()
+
+# Initialize Argos Translate (download language packages if needed)
+def initialize_argos_translate():
+    try:
+        # Check if packages are already installed
+        available_packages = argostranslate.package.get_available_packages()
+        if not available_packages:
+            # Download and install package index
+            argostranslate.package.update_package_index()
+            available_packages = argostranslate.package.get_available_packages()
+            
+        # Install common language packages if needed
+        installed_languages = [pkg.from_code for pkg in argostranslate.translate.get_installed_languages()]
+        
+        common_languages = ['en', 'fr', 'de', 'es', 'it']
+        for lang in common_languages:
+            if lang not in installed_languages and lang != 'en':
+                # Find packages for this language pair
+                packages = [pkg for pkg in available_packages 
+                            if (pkg.from_code == 'en' and pkg.to_code == lang) or
+                               (pkg.from_code == lang and pkg.to_code == 'en')]
+                
+                # Install packages
+                for pkg in packages:
+                    try:
+                        print(f"Installing language package: {pkg.from_code} -> {pkg.to_code}")
+                        argostranslate.package.install_from_path(
+                            argostranslate.package.download_package(pkg)
+                        )
+                    except Exception as e:
+                        print(f"Error installing language package {pkg.from_code}-{pkg.to_code}: {e}")
+        
+        print("Argos Translate initialized successfully")
+        return True
+    except Exception as e:
+        print(f"Error initializing Argos Translate: {e}")
+        return False
+
+# Initialize Argos Translate on startup
+initialize_argos_translate()
 
 app = Flask(__name__)
 
@@ -171,24 +211,42 @@ def get_domain(url):
     return parsed_url.netloc
 
 def translate_keywords(keywords, target_language):
-    """Translate financial keywords to target language using DeepL"""
+    """Translate financial keywords to target language using Argos Translate"""
     try:
-        # Get DeepL API key from environment variables
-        auth_key = os.environ.get('DEEPL_API_KEY')
-        if not auth_key:
-            print("DeepL API key not found in environment variables")
-            return keywords  # Return original keywords if API key not found
+        # Skip translation if target language is English or unsupported
+        if target_language == 'en':
+            return keywords
+            
+        # Get installed languages
+        installed_languages = argostranslate.translate.get_installed_languages()
+        from_lang = None
+        to_lang = None
         
-        # Initialize DeepL translator
-        translator = deepl.Translator(auth_key)
+        # Find the language pair
+        for lang in installed_languages:
+            if lang.code == 'en':
+                from_lang = lang
+            if lang.code == target_language:
+                to_lang = lang
+                
+        # If language pair not found, return original keywords
+        if not from_lang or not to_lang:
+            print(f"Translation from English to {target_language} not supported")
+            return keywords
+            
+        # Get translation function
+        try:
+            translation = from_lang.get_translation(to_lang)
+        except Exception as e:
+            print(f"Error getting translation function: {e}")
+            return keywords
+            
+        # Translate each keyword
         translated = []
-        
         for keyword in keywords:
             try:
-                # Translate using DeepL
-                result = translator.translate_text(keyword, target_lang=target_language.upper())
-                if result and result.text:
-                    translated.append(result.text.lower())
+                result = translation.translate(keyword)
+                translated.append(result.lower())
             except Exception as e:
                 print(f"Error translating keyword '{keyword}': {e}")
                 translated.append(keyword)  # Keep original if translation fails
@@ -403,7 +461,7 @@ def extract_revenue_with_context(text, prefer_recent=True):
                 prefix = '£'
             elif '¥' in match.group(0):
                 prefix = '¥'
-            
+                
             # Score the match by relevance (quality of context)
             score = 0
             
@@ -702,25 +760,28 @@ def search_google_for_revenue(company_name, country=None, domain=None):
         
         # Add local language queries if available
         if local_language and local_language != 'en':
-            # Translate key terms using DeepL
+            # Translate key terms using Argos Translate
             try:
-                # Get DeepL API key from environment variables
-                auth_key = os.environ.get('DEEPL_API_KEY')
-                if auth_key:
-                    translator = deepl.Translator(auth_key)
+                # Get installed languages
+                installed_languages = argostranslate.translate.get_installed_languages()
+                from_lang = None
+                to_lang = None
+                
+                # Find the language pair
+                for lang in installed_languages:
+                    if lang.code == 'en':
+                        from_lang = lang
+                    if lang.code == local_language:
+                        to_lang = lang
+                        
+                # If language pair found, translate
+                if from_lang and to_lang:
+                    translation = from_lang.get_translation(to_lang)
                     
                     # Translate key financial terms
-                    revenue_translation = translator.translate_text(
-                        "annual revenue", target_lang=local_language.upper()
-                    ).text
-                    
-                    year_translation = translator.translate_text(
-                        "year", target_lang=local_language.upper()
-                    ).text
-                    
-                    financial_translation = translator.translate_text(
-                        "financial results", target_lang=local_language.upper()
-                    ).text
+                    revenue_translation = translation.translate("annual revenue").lower()
+                    year_translation = translation.translate("year").lower()
+                    financial_translation = translation.translate("financial results").lower()
                     
                     # Add localized queries with years
                     for year in PRIORITY_YEARS:
@@ -764,10 +825,10 @@ def search_google_for_revenue(company_name, country=None, domain=None):
                         content = fetch_with_retry(url, max_retries=2, timeout=10)
                         if content:
                             page_soup = BeautifulSoup(content, 'html.parser')
-                            # Extract paragraphs that might contain revenue info
+                            # Extract paragraphs with financial keywords
                             for elem in page_soup.find_all(['p', 'div', 'table']):
                                 elem_text = elem.get_text(strip=True)
-                                if any(keyword in elem_text.lower() for keyword in FINANCIAL_KEYWORDS):
+                                if any(kw in elem_text.lower() for kw in FINANCIAL_KEYWORDS):
                                     search_results.append(elem_text)
                     except Exception as e:
                         print(f"Error scraping search result URL {url}: {e}")
@@ -992,4 +1053,3 @@ if __name__ == '__main__':
     # Get port from environment variable for AWS compatibility
     port = int(os.environ.get('PORT', 5000))
     app.run(debug=False, host='0.0.0.0', port=port)
-
